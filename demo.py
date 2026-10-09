@@ -1,58 +1,54 @@
-﻿"""
-Demo runner: executes autonomous watchdog audit with live terminal visualization.
-"""
-from agent import AutonomousVerifierAgent, InvoiceTask
-import json
+"""Offline fixture demo; it never calls RPC and is always marked NOT VERIFIED."""
+from __future__ import annotations
 
-def run_demo():
-    print("=" * 70)
-    print(" ARC INVOICE VERIFY - AUTONOMOUS AUDIT & CRE CONSENSUS DEMO")
-    print("=" * 70)
+import argparse
 
-    agent = AutonomousVerifierAgent()
+def build_fixture():
+    """Build an explicitly unverified fixture without starting Streamlit."""
+    from src.models import Invoice, VerificationResult
+    from src.arc_verify_core.evidence import snapshot_hash, utc_now
+    from src.receipt_generator import AuditReceiptGenerator
 
-    tasks = [
-        InvoiceTask(
-            invoice_id="INV-2026-001",
-            expected_recipient="0x71c8fb86133757790b5340012299942c415a9999",
-            expected_amount_usdc=1500.0,
-            tx_hash="0x4e0a7f1a3b8d9c2e00112233445566778899aabbccddeeff0011223344556677",
-        ),
-        InvoiceTask(
-            invoice_id="INV-2026-002",
-            expected_recipient="0x71c8fb86133757790b5340012299942c415a9999",
-            expected_amount_usdc=800.0,
-            tx_hash="0x99887766554433221100ffeeddccbbaa99887766554433221100ffeeddccbbaa",
-        ),
-    ]
-
-    mock_db = {
-        "0x4e0a7f1a3b8d9c2e00112233445566778899aabbccddeeff0011223344556677": {
-            "status": 1,
-            "to": "0x71c8fb86133757790b5340012299942c415a9999",
-            "amount_usdc": 1500.0,
-        },
-        "0x99887766554433221100ffeeddccbbaa99887766554433221100ffeeddccbbaa": {
-            "status": 0,
-            "to": "0x71c8fb86133757790b5340012299942c415a9999",
-            "amount_usdc": 0.0,
-        },
+    invoice = Invoice(
+        invoice_id="DEMO-001", description="Offline fixture",
+        recipient_address="0x" + "1" * 40, payer_address="0x" + "2" * 40,
+        amount_expected_usdc="1.00",
+    )
+    body = {
+        "snapshot_version": "arc-invoice-verify/2",
+        "invoice": invoice.model_dump(mode="json"),
+        "tx_hash": "0x" + "a" * 64, "verified": False,
+        "outcome": "unsupported", "reason": "DEMO ONLY: no network call.",
+        "policy": {"fixture": True}, "evidence": {"fixture_only": True},
+        "chain_id": 5042002,
     }
+    result = VerificationResult(
+        **body, hash_sha256=snapshot_hash(body), generated_at=utc_now()
+    )
+    receipt = AuditReceiptGenerator().generate_json_receipt(result)
+    if result.verified or result.outcome != "unsupported":
+        raise RuntimeError("Fixture safety invariant failed")
+    return result, receipt
 
-    results = agent.run_autonomous_cycle(tasks, mock_rpc_data=mock_db)
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--smoke", action="store_true", help="validate fixture offline without Streamlit")
+    args = parser.parse_args()
+    result, receipt = build_fixture()
+    if args.smoke:
+        print(f"DEMO_SMOKE_OK verified={result.verified} outcome={result.outcome} receipt_bytes={len(receipt.encode('utf-8'))}")
+        return 0
 
-    for res in results:
-        badge = "[PASS - VERIFIED]" if res.verdict == "VERIFIED" else "[FAIL - REJECTED]"
-        print(f"\n{badge} Invoice ID: {res.invoice_id}")
-        print(f"Confidence: {res.confidence_score * 100:.1f}%")
-        print(f"Court-Ready Evidence Hash: {res.evidence_hash}")
-        print("Reasoning Trail:")
-        for step in res.reasoning_trail:
-            print(f"  -> {step}")
-
-    print("\n" + "=" * 70)
-    print(" Consensus payload ready for Chainlink CRE DON attestation.")
-    print("=" * 70)
+    import streamlit as st
+    st.set_page_config(page_title="Arc Verify — Fixture", page_icon="🧪")
+    st.title("Offline fixture demonstration")
+    st.error("FIXTURE ONLY — NOT ON-CHAIN — NOT VERIFIED")
+    if st.button("Show clearly labeled sample"):
+        st.json(result.model_dump(mode="json"))
+        st.download_button(
+            "Download fixture JSON (NOT VERIFIED)", receipt, "fixture-not-verified.json"
+        )
+    return 0
 
 if __name__ == "__main__":
-    run_demo()
+    raise SystemExit(main())

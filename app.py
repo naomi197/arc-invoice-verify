@@ -1,90 +1,63 @@
-﻿import os
-import streamlit as st
-from src.models import Invoice, InvoiceStatus
-from src.verifier import ArcInvoiceVerifier
-from src.receipt_generator import AuditReceiptGenerator
+"""Streamlit UI; importing this module is safe when Streamlit is not installed."""
+try:
+    import streamlit as st
+except ImportError:
+    st = None
 
-st.set_page_config(
-    page_title="Arc Invoice Verify | LegalTech Engine",
-    page_icon="⚖️",
-    layout="wide"
-)
 
-st.title("⚖️ Arc Invoice Verify")
-st.caption("Read-only, Zero-Knowledge On-Chain Payment Verification & Legal Audit Receipts for Arc Mainnet")
+def main():
+    if st is None:
+        raise RuntimeError("Streamlit is required to run this UI; install requirements.txt")
+    from pydantic import ValidationError
+    from src.models import Invoice
+    from src.arc_verify_core.verifier import ArcInvoiceVerifier, NetworkConfig
+    from src.receipt_generator import AuditReceiptGenerator
 
-st.markdown("---")
+    st.set_page_config(page_title="Arc Invoice Verify", page_icon="◈", layout="wide")
+    st.title("Arc Invoice Verify")
+    st.caption("USDC payment evidence on Arc · Read-only RPC · No wallet keys")
+    st.warning("Verification uses Transfer event logs. Invoice association is user-supplied and is not proven on-chain.")
+    with st.expander("Unit and scope details", expanded=True):
+        st.markdown("""**USDC amounts use 6 decimals.** Native Arc Transfer event values use 18 decimals and are converted only when exactly divisible by 10¹²; native dust is rejected, never rounded. ERC-20 USDC logs use 6-decimal units. Transaction `value` alone does not prove payment.
 
-col1, col2 = st.columns([1, 1], gap="large")
+No legal/evidentiary guarantee, signature, court-ready certificate, or ZK proof is provided. Verification depends on configured RPC; finality is shown only when the RPC provides a supported signal.""")
+    if "last_result" not in st.session_state: st.session_state.last_result = None
+    if "last_input" not in st.session_state: st.session_state.last_input = None
+    a, b = st.columns(2)
+    with a:
+        st.subheader("Invoice")
+        iid=st.text_input("Invoice ID"); desc=st.text_input("Description"); recipient=st.text_input("Recipient address"); payer=st.text_input("Expected payer address")
+        amount=st.text_input("Expected USDC amount", help="Plain decimal string, maximum 6 fractional digits; no float conversions.")
+        currency=st.text_input("Currency", value="USDC")
+    with b:
+        st.subheader("Transaction")
+        txh=st.text_input("Transaction hash"); exact=st.checkbox("Require exact amount (otherwise overpayment accepted)", False)
+        cfg=NetworkConfig.from_env(); st.info(f"Network: **{cfg.name}** · expected chain ID **{cfg.expected_chain_id}**")
+        st.caption("RPC endpoint is server-side. Live eth_chainId is checked on every verification.")
+        verify=st.button("Verify events", type="primary", use_container_width=True)
+    vals=(iid,desc,recipient,payer,amount,currency,txh,exact)
+    if st.session_state.last_input is not None and vals != st.session_state.last_input: st.session_state.last_result=None
+    if verify:
+        st.session_state.last_input=vals
+        try:
+            inv=Invoice(invoice_id=iid, description=desc, recipient_address=recipient, payer_address=payer, amount_expected_usdc=amount, currency_symbol=currency)
+            with st.spinner("Querying configured Arc RPC…"): result=ArcInvoiceVerifier(cfg, exact_amount=exact).verify_payment(inv, txh)
+            st.session_state.last_result=result
+        except (ValidationError, ValueError) as e:
+            st.session_state.last_result=None; st.error(f"Invalid input: {e}")
+        except Exception:
+            st.session_state.last_result=None; st.error("Verification unavailable; no payment was verified. Check server logs.")
+    result=st.session_state.last_result
+    if result is not None:
+        (st.success if result.verified else st.info if result.outcome in ("pending", "not_found") else st.error)(f"{result.outcome.upper()}: {result.reason}")
+        st.write(f"Chain ID: `{result.chain_id}` · Invoice: `{result.invoice.invoice_id}`")
+        st.json({"policy":result.policy, "evidence":result.evidence})
+        st.caption(f"Evidence snapshot SHA-256: `{result.hash_sha256}` — integrity checksum only, not a signature or independent trust proof.")
+        gen=AuditReceiptGenerator()
+        st.download_button("Download JSON evidence", gen.generate_json_receipt(result), "arc-verification-evidence.json", "application/json")
+        st.download_button("Download PDF summary", gen.generate_pdf_receipt(result), "arc-verification-summary.pdf", "application/pdf")
+    st.caption("RPC results are not independently audited. A detected event does not establish invoice authenticity, legal enforceability, or non-reuse of a transaction.")
 
-with col1:
-    st.subheader("1. Invoice Details")
-    invoice_id = st.text_input("Invoice ID", value="INV-2026-BLI-001")
-    description = st.text_input("Service Description", value="Legal Tech Consulting & Smart Contract Audit")
-    recipient_address = st.text_input("Expected Recipient Address (EVM)", value="0x71C7656EC7ab88b098defB751B7401B5f6d8976F")
-    payer_address = st.text_input("Expected Payer Address (Optional)", value="")
-    
-    amount_in_arc = st.number_input("Expected Amount (ARC)", min_value=0.0001, value=1.5, step=0.1, format="%.4f")
-    amount_expected_wei = int(amount_in_arc * (10 ** 18))
 
-    st.subheader("2. Arc Network Configuration")
-    rpc_url = st.text_input("RPC Endpoint", value="https://rpc.arc.network")
-
-with col2:
-    st.subheader("3. On-Chain Verification")
-    tx_hash = st.text_input("Transaction Hash (0x...)", placeholder="Paste Arc Mainnet Transaction Hash here")
-    
-    verify_button = st.button("🔍 Verify Transaction & Generate Audit Certificate", type="primary", use_container_width=True)
-
-    if verify_button:
-        if not tx_hash.strip():
-            st.warning("⚠️ Please provide a valid transaction hash.")
-        else:
-            invoice = Invoice(
-                invoice_id=invoice_id,
-                recipient_address=recipient_address,
-                payer_address=payer_address if payer_address.strip() else None,
-                amount_expected_wei=amount_expected_wei,
-                description=description
-            )
-            
-            verifier = ArcInvoiceVerifier(rpc_url=rpc_url)
-            
-            with st.spinner("Querying blockchain state..."):
-                result = verifier.verify_payment(invoice, tx_hash.strip())
-
-            if result.is_valid:
-                st.success(f"✅ Verified Successfully! (Block: {result.block_number})")
-            else:
-                st.error(f"❌ Verification Failed: {result.status.value}")
-                st.info(f"Reason: {result.details}")
-
-            # Generate Audit Receipts
-            os.makedirs("exports", exist_ok=True)
-            pdf_path = f"exports/{invoice.invoice_id}_certificate.pdf"
-            json_path = f"exports/{invoice.invoice_id}_certificate.json"
-            
-            AuditReceiptGenerator.generate_pdf_receipt(invoice, result, pdf_path)
-            AuditReceiptGenerator.generate_json_receipt(invoice, result, json_path)
-
-            st.markdown("### 📄 Cryptographic Receipts")
-            with open(pdf_path, "rb") as f:
-                st.download_button(
-                    label="📥 Download Legal PDF Certificate",
-                    data=f,
-                    file_name=f"{invoice.invoice_id}_Audit_Certificate.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
-            
-            with open(json_path, "r", encoding="utf-8") as f:
-                st.download_button(
-                    label="📥 Download JSON Audit Trail",
-                    data=f.read(),
-                    file_name=f"{invoice.invoice_id}_Audit_Trail.json",
-                    mime="application/json",
-                    use_container_width=True
-                )
-
-st.markdown("---")
-st.markdown("<center><small style='color: gray;'>Built for BLI Legal Tech Hackathon 2026 | Read-Only | Compliance & Audit Ready</small></center>", unsafe_allow_html=True)
+if __name__ == "__main__":
+    main()

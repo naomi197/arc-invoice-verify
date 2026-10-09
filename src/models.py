@@ -1,37 +1,33 @@
-﻿from enum import Enum
-from typing import Optional
-from pydantic import BaseModel, Field
-
-
-class InvoiceStatus(str, Enum):
-    PENDING = "PENDING"
-    VERIFIED = "VERIFIED"
-    FAILED_MISMATCH = "FAILED_MISMATCH"
-    FAILED_REVERTED = "FAILED_REVERTED"
-    NOT_FOUND = "NOT_FOUND"
-
-
+"""Validated invoice and result models."""
+from pydantic import BaseModel,ConfigDict,field_validator,model_validator
 class Invoice(BaseModel):
-    """Invoice data model"""
-    invoice_id: str = Field(..., description="Unique invoice identifier, e.g. INV-2026-001")
-    recipient_address: str = Field(..., description="EVM address expected to receive the payment")
-    payer_address: Optional[str] = Field(None, description="Optional expected payer EVM address")
-    amount_expected_wei: int = Field(..., description="Expected payment amount in WEI")
-    currency_symbol: str = Field(default="ARC", description="Symbol of native token")
-    description: str = Field(default="Professional Services", description="Service description")
-    due_timestamp: Optional[int] = Field(None, description="Unix timestamp expiration")
-
-
+    model_config=ConfigDict(extra="forbid")
+    invoice_id:str; description:str; recipient_address:str; payer_address:str; amount_expected_usdc:str; currency_symbol:str="USDC"
+    @field_validator("invoice_id","currency_symbol","description")
+    @classmethod
+    def nonempty(cls,v):
+        v=v.strip()
+        if not v: raise ValueError("must not be empty")
+        return v
+    @field_validator("amount_expected_usdc")
+    @classmethod
+    def amount(cls,v):
+        from src.arc_verify_core.money import parse_usdc_micro
+        parse_usdc_micro(v); return str(v).strip()
+    @field_validator("recipient_address","payer_address")
+    @classmethod
+    def addr(cls,v):
+        import re
+        if not isinstance(v,str) or not re.fullmatch(r"0x[0-9a-fA-F]{40}",v): raise ValueError("must be 20-byte hex address")
+        return v
+    @model_validator(mode="after")
+    def different(self):
+        if self.recipient_address.lower()==self.payer_address.lower(): raise ValueError("payer and recipient must differ")
+        return self
 class VerificationResult(BaseModel):
-    """Verification outcome"""
-    invoice_id: str
-    tx_hash: str
-    status: InvoiceStatus
-    is_valid: bool
-    block_number: Optional[int] = None
-    sender_address: Optional[str] = None
-    receiver_address: Optional[str] = None
-    amount_paid_wei: Optional[int] = None
-    currency_symbol: str = "ARC"
-    explorer_url: Optional[str] = None
-    details: str = ""
+    model_config=ConfigDict(extra="forbid")
+    invoice:Invoice; tx_hash:str; verified:bool; outcome:str; reason:str; policy:dict; evidence:dict; chain_id:int
+    snapshot_version:str="arc-invoice-verify/2"; hash_sha256:str=""; generated_at:str=""
+    def compute_hash(self):
+        from src.arc_verify_core.evidence import snapshot_hash
+        return snapshot_hash({"snapshot_version":self.snapshot_version,"invoice":self.invoice.model_dump(mode="json"),"tx_hash":self.tx_hash,"verified":self.verified,"outcome":self.outcome,"reason":self.reason,"policy":self.policy,"evidence":self.evidence,"chain_id":self.chain_id})

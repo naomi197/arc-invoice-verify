@@ -1,0 +1,19 @@
+﻿# Chainlink Runtime Environment (CRE) Workflow Configuration
+schemaVersion: "1.0.0"
+name: "arc-invoice-audit-cre-workflow"
+description: "Tamper-proof on-chain invoice audit consensus workflow via Chainlink CRE"
+version: "1.0.0"
+
+trigger:
+  type: "cron"
+  schedule: "*/5 * * * *" # Trigger every 5 minutes
+
+consensus:
+  type: "bft"
+  threshold: "2/3"
+
+capabilities:
+  - id: "http-gateway@1.0.0"
+    config:
+      nodeMode: "identical-consensus"
+  - id: "evm-reader@1.0.0"

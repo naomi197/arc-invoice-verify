@@ -1,4 +1,4 @@
-﻿# ⚖️ Arc Invoice Verify
+# ⚖️ Arc Invoice Verify
 
 **Read-only on-chain payment verification and audit-receipt generation for the Arc ecosystem.**
 
@@ -46,17 +46,25 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 
+```
+
 ## Run the application
 
-powershell
+
+```powershell
 streamlit run app.py
+
+```
 
 The local Streamlit address is normally displayed in the terminal after startup.
 
 ## Run tests
 
-powershell
+
+```powershell
 pytest -v
+
+```
 
 The repository includes automated tests for the verification logic and related project components. Test success indicates that the covered scenarios passed; it should not be interpreted as a claim of 100% source-code coverage unless a coverage report is generated separately.
 

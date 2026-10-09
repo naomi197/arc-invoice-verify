@@ -18,7 +18,7 @@ def main():
     st.caption("USDC payment evidence on Arc · Read-only RPC · No wallet keys")
     st.warning("Verification uses Transfer event logs. Invoice association is user-supplied and is not proven on-chain.")
     with st.expander("Unit and scope details", expanded=True):
-        st.markdown("""**USDC amounts use 6 decimals.** Native Arc Transfer event values use 18 decimals and are converted only when exactly divisible by 10¹²; native dust is rejected, never rounded. ERC-20 USDC logs use 6-decimal units. Transaction `value` alone does not prove payment.
+        st.markdown("""**USDC amounts use 6 decimals.** A payment counts only when the receipt contains an ERC-20 Transfer from the configured USDC contract. Native Transfer logs and transaction `value` are recorded as extra evidence and are not credited.
 
 No legal/evidentiary guarantee, signature, court-ready certificate, or ZK proof is provided. Verification depends on configured RPC; finality is shown only when the RPC provides a supported signal.""")
     if "last_result" not in st.session_state: st.session_state.last_result = None

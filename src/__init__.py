@@ -1,1 +1,1 @@
-"""arc-invoice-verify corrected overlay sources."""
+"""Arc invoice verification package."""

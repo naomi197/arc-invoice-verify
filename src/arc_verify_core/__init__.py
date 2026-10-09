@@ -1,1 +1,1 @@
-"""Shared native-transfer verification primitives."""
+"""USDC ERC-20 invoice verification primitives."""

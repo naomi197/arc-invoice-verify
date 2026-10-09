@@ -22,25 +22,25 @@ def rpc_ok(logs,finalized=None):
     if finalized is not None: resps["arc_getTransactionFinality"]={"finalized":finalized}
     return Rpc(resps)
 class Verifier(unittest.TestCase):
-    def test_native_exact_divisible_verified(self):
+    def test_native_exact_divisible_rejected_for_usdc(self):
         v=ArcInvoiceVerifier(cfg(),rpc_ok([transfer_log(NATIVE_EMITTER,ADDR_P,ADDR_R,1_500_000*10**12)]))
-        r=v.verify_payment(inv(),H); self.assertTrue(r.verified); self.assertEqual(r.evidence["matched_event"]["amount_usdc_micro"],"1500000")
+        r=v.verify_payment(inv(),H); self.assertFalse(r.verified); self.assertEqual(r.outcome,"insufficient")
+        self.assertIsNone(r.evidence.get("matched_event")); self.assertEqual(r.evidence["native_events_auxiliary_count"],1)
     def test_native_dust_unsupported(self):
         v=ArcInvoiceVerifier(cfg(),rpc_ok([transfer_log(NATIVE_EMITTER,ADDR_P,ADDR_R,1_500_000*10**12+7)]))
-        r=v.verify_payment(inv(),H); self.assertFalse(r.verified); self.assertEqual(r.outcome,"unsupported"); self.assertIn("precision",r.reason)
-    def test_native_dust_accept_policy(self):
-        v=ArcInvoiceVerifier(cfg(),rpc_ok([transfer_log(NATIVE_EMITTER,ADDR_P,ADDR_R,1_500_000*10**12+7)]),accept_dust=True)
-        r=v.verify_payment(inv(),H); self.assertFalse(r.verified); self.assertEqual(r.outcome,"insufficient"); self.assertIn("dust",r.reason)
-        self.assertEqual(r.evidence["dust"]["dust_base_units"],"7")
-        self.assertEqual(r.evidence["dust"]["expected_native_raw_minimum"],str(1_500_000*10**12))
-        self.assertTrue(r.evidence["dust"]["raw_meets_invoice_threshold"])
+        r=v.verify_payment(inv(),H); self.assertFalse(r.verified); self.assertEqual(r.outcome,"insufficient")
+        self.assertIsNone(r.evidence.get("matched_event")); self.assertEqual(r.evidence["native_events_auxiliary_count"],1)
+    def test_native_dust_is_not_a_credit_policy(self):
+        v=ArcInvoiceVerifier(cfg(),rpc_ok([transfer_log(NATIVE_EMITTER,ADDR_P,ADDR_R,1_500_000*10**12+7)]))
+        r=v.verify_payment(inv(),H); self.assertFalse(r.verified); self.assertEqual(r.outcome,"insufficient")
+        self.assertEqual(r.evidence["events"][0]["dust_base_units"],"7")
+        self.assertTrue(r.evidence["events"][0]["auxiliary_only_for_usdc"])
     def test_native_dust_below_invoice_never_rounds_up(self):
         raw=1_500_000*10**12-1
-        v=ArcInvoiceVerifier(cfg(),rpc_ok([transfer_log(NATIVE_EMITTER,ADDR_P,ADDR_R,raw)]),accept_dust=True)
+        v=ArcInvoiceVerifier(cfg(),rpc_ok([transfer_log(NATIVE_EMITTER,ADDR_P,ADDR_R,raw)]))
         r=v.verify_payment(inv(),H)
         self.assertFalse(r.verified); self.assertEqual(r.outcome,"insufficient")
-        self.assertFalse(r.evidence["dust"]["raw_meets_invoice_threshold"])
-        self.assertEqual(r.evidence["dust"]["dust_base_units"],str(10**12-1))
+        self.assertIsNone(r.evidence.get("matched_event")); self.assertEqual(r.evidence["native_events_auxiliary_count"],1)
     def test_erc20_verified(self):
         v=ArcInvoiceVerifier(cfg(),rpc_ok([transfer_log(USDC_CONTRACT,ADDR_P,ADDR_R,1_500_000)]))
         r=v.verify_payment(inv(),H); self.assertTrue(r.verified); self.assertEqual(r.evidence["matched_event"]["kind"],"erc20")
@@ -58,7 +58,8 @@ class Verifier(unittest.TestCase):
         r=ArcInvoiceVerifier(cfg(),rp).verify_payment(inv(),H); self.assertEqual(r.outcome,"insufficient")
     def test_unknown_emitter_ignored(self):
         v=ArcInvoiceVerifier(cfg(),rpc_ok([transfer_log("0x"+"9"*40,ADDR_P,ADDR_R,1_500_000)]))
-        r=v.verify_payment(inv(),H); self.assertEqual(r.outcome,"unsupported")
+        r=v.verify_payment(inv(),H); self.assertEqual(r.outcome,"insufficient")
+        self.assertIn("No valid Transfer log from the configured USDC ERC-20 contract",r.reason)
     def test_wrong_configured_chain_id(self):
         rp=rpc_ok([]); rp.resps["eth_chainId"]="0x13b2" # mainnet while config is testnet
         r=ArcInvoiceVerifier(cfg(),rp).verify_payment(inv(),H)

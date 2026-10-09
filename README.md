@@ -1,82 +1,51 @@
-# ⚖️ Arc Invoice Verify
+# Arc Invoice Verify
 
-**Read-only on-chain payment verification and audit-receipt generation for the Arc ecosystem.**
+Read-only check of whether an Arc transaction contains a USDC ERC-20 `Transfer` that matches an invoice. Built for the Blockchain Legal Institute (BLI) Legal Tech Hackathon 2.
 
-Built for the **Blockchain Legal Institute (BLI) Legal Tech Hackathon 2**.
+## What a match means
 
-## Overview
+A result is `verified` only when all of the following are true:
 
-Arc Invoice Verify helps users compare commercial invoice terms with blockchain transaction data without requiring a wallet connection, transaction signing, or private-key access.
+- The invoice currency is USDC.
+- The configured RPC `eth_chainId` matches the selected Arc network (testnet `5042002` or mainnet `5042`).
+- The transaction hash on the transaction and on the receipt is the hash that was requested.
+- The receipt status is success (`1`).
+- The receipt contains an ERC-20 `Transfer` from the configured USDC contract, `0x3600000000000000000000000000000000000000`.
+- That log's sender, recipient, and amount satisfy the invoice. Overpayment is accepted unless exact amount is required.
 
-The application is designed as a read-only verification workflow:
+Native Transfer logs and `transaction.value` are kept in the evidence object and are not payment. Finality is reported only when `arc_getTransactionFinality` returns a boolean. If that call is missing, finality is unknown and is not treated as confirmed.
 
-1. Enter the expected invoice and payment details.
-2. Retrieve or provide transaction information.
-3. Compare the transaction against the invoice parameters.
-4. Generate structured verification evidence.
-5. Export an audit-oriented PDF receipt and JSON-compatible evidence.
+The invoice id is supplied by the user. It is not bound to the transaction on-chain, so the same payment can match more than one invoice that shares the payer, recipient, and amount. The SHA-256 snapshot hash is an integrity checksum of the result body. It is not a signature, a zero-knowledge proof, or a court certificate.
 
-The application is intended as a technical demonstration and verification aid. It does not provide legal advice and does not guarantee legal, regulatory, tax, accounting, or court acceptance.
+## Run
 
-## Key Features
-
-- Read-only verification workflow
-- No wallet connection or transaction-signing requirement
-- Validation of recipient, sender, amount, transaction status, and confirmation data
-- Integer-based amount handling to avoid floating-point rounding errors
-- Deterministic evidence and hash generation
-- PDF audit-receipt generation
-- Structured verification results for downstream systems
-- Streamlit interface for demonstration and review
-
-## Architecture
-
-- **Language:** Python
-- **Blockchain integration:** web3.py and EVM-compatible RPC access
-- **Data validation:** Pydantic
-- **PDF generation:** ReportLab
-- **User interface:** Streamlit
-- **Testing:** pytest and Python unittest-compatible test modules
-
-## Installation
 ```powershell
-git clone https://github.com/naomi197/arc-invoice-verify.git
-cd arc-invoice-verify
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-
-```
-
-## Run the application
-
-
-```powershell
 streamlit run app.py
-
 ```
 
-The local Streamlit address is normally displayed in the terminal after startup.
+The default network is testnet. Set `ARC_NETWORK` to `mainnet` or `testnet`, and set `ARC_RPC_URL` only when you need an endpoint other than the public Arc RPC for that network.
 
-## Run tests
-
+## Tests
 
 ```powershell
 pytest -v
-
 ```
 
-The repository includes automated tests for the verification logic and related project components. Test success indicates that the covered scenarios passed; it should not be interpreted as a claim of 100% source-code coverage unless a coverage report is generated separately.
+Passing tests cover the scenarios in `tests/`. They are not a claim of complete coverage.
 
-## Scope and limitations
+## Layout
 
-- The application performs read-only verification and does not submit blockchain transactions.
-- Verification results depend on the accuracy and availability of the configured RPC endpoint.
-- Generated PDFs are audit-oriented technical records, not a legal opinion or a guarantee of court admissibility.
-- The project does not claim to implement zero-knowledge proofs. The term “read-only” refers to the absence of wallet signing and write permissions.
-- Users and organizations remain responsible for their own legal, tax, accounting, compliance, and evidentiary review.
-- Live-network verification may require a configured RPC endpoint and network access.
+- `app.py` — Streamlit demonstration
+- `demo.py` — offline fixture that is always unverified
+- `src/arc_verify_core/` — RPC client, decimal parsing, and the verifier
+- `src/models.py` — invoice and result models
+- `src/receipt_generator.py` — JSON and PDF export
+- `tests/` — the only test suite
+- `docs/dorahacks-listing.md` — text to paste into the DoraHacks build page
 
 ## License
 
-Distributed under the MIT License.
+MIT

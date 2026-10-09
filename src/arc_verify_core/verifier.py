@@ -1,4 +1,4 @@
-"""Event-log-driven Arc USDC verifier (native EIP-7708 + ERC-20)."""
+"""Fail-closed Arc invoice verification from USDC ERC-20 Transfer logs."""
 from __future__ import annotations
 import re,os
 from dataclasses import dataclass
@@ -24,22 +24,19 @@ class NetworkConfig:
         return cls(n,os.getenv("ARC_RPC_URL",default),CHAIN_IDS[n],f"https://explorer.arc.network/tx/")
 
 class ArcInvoiceVerifier:
-    """Authoritative amounts/recipient come from the Transfer event log, never from tx.value alone.
+    """USDC credit comes only from a Transfer log of the configured ERC-20 contract.
 
-    Native EIP-7708 Transfer values are 18 decimals; ERC-20 USDC values are 6 decimals.
-    Native raw values are converted to USDC micro-units only when exactly divisible by 1e12;
-    otherwise the outcome is dust/precision-mismatch, never a silently rounded match.
+    Native Transfer logs and transaction.value stay in the evidence record and never credit a USDC invoice.
     """
-    def __init__(self,config=None,rpc=None,*,exact_amount=False,accept_dust=False):
+    def __init__(self,config=None,rpc=None,*,exact_amount=False):
         self.config=config or NetworkConfig.from_env(); self.rpc=rpc or JsonRpcClient(self.config.rpc_url)
-        self.exact_amount=bool(exact_amount); self.accept_dust=bool(accept_dust)
+        self.exact_amount=bool(exact_amount)
     def _res(self,inv,txh,outcome,reason,chain,ev,verified=False,finalized=None):
         pol={"asset":"USDC","chain_ids":CHAIN_IDS,"usdc_contract":USDC_CONTRACT,"usdc_decimals":6,
-             "native_decimals":18,"authoritative_source":"Transfer event log","tx_value_used_as_payment":False,
-             "exact_amount":self.exact_amount,"dust_policy":("reject_nonzero_remainder" if not self.accept_dust else "consider_but_never_round_or_credit_fractional_micro_units"),
-             "accept_dust_requested":self.accept_dust,
-             "finality_source":finalized,"scope":"No court-ready/ZK claims: snapshot hash is integrity only."}
-        body={"snapshot_version":"arc-invoice-verify/2","invoice":inv.model_dump(mode="json"),"tx_hash":txh,
+             "native_decimals":18,"authoritative_source":"ERC-20 Transfer log for configured USDC contract","tx_value_used_as_payment":False,
+             "exact_amount":self.exact_amount,"dust_policy":"native logs are auxiliary only for USDC invoices",
+             "finality_source":(ev.get("finality") or {}).get("source"),"scope":"No court-ready/ZK claims: snapshot hash is integrity only."}
+        body={"snapshot_version":"arc-invoice-verify/3","invoice":inv.model_dump(mode="json"),"tx_hash":txh,
               "verified":verified,"outcome":outcome,"reason":reason,"policy":pol,"evidence":ev,"chain_id":chain}
         return VerificationResult(**body,hash_sha256=snapshot_hash(body),generated_at=utc_now())
     @staticmethod
@@ -73,9 +70,12 @@ class ArcInvoiceVerifier:
         if is_erc20:
             micro=raw; dust=0; kind="erc20"
         else:
-            micro,dust=native_raw_to_usdc_micro(raw); kind="native"
-            if micro is None:
-                return ("dust",sender,recipient,raw,{"kind":kind,"raw_base_units":str(raw),"dust_base_units":str(dust),"sender":sender,"recipient":recipient,"log_address":la})
+            micro,dust=native_raw_to_usdc_micro(raw)
+            return ("auxiliary",sender,recipient,micro,{
+                "kind":"native","raw_value":str(raw),
+                "amount_usdc_micro":None if micro is None else str(micro),
+                "dust_base_units":str(dust),"sender":sender,"recipient":recipient,
+                "log_address":la,"auxiliary_only_for_usdc":True})
         ev={"kind":kind,"raw_value":str(raw),"amount_usdc_micro":str(micro),"sender":sender,"recipient":recipient,"log_address":la}
         return ("ok",sender,recipient,micro,ev)
     def verify_payment(self,invoice:Invoice,tx_hash:str)->VerificationResult:
@@ -122,31 +122,21 @@ class ArcInvoiceVerifier:
                 try: m=self._match_event(invoice,log,expected)
                 except ValueError: return self._res(invoice,tx_hash,"insufficient","Malformed Transfer log; failing closed.",chain,ev)
                 if m: candidates.append(m)
-            if not candidates:
-                return self._res(invoice,tx_hash,"unsupported","No Arc-native or USDC Transfer event from a recognized emitter/contract.",chain,ev)
-            dust_events=[c for c in candidates if c[0]=="dust"]
             ok_events=[c for c in candidates if c[0]=="ok"]
+            auxiliary=[c for c in candidates if c[0]=="auxiliary"]
             ev["events"]=[c[4] for c in candidates]
-            if not ok_events:
-                d=dust_events[0][4]
-                # Explicit opt-in changes how a precision-mismatch is classified, never
-                # its arithmetic: fractional sub-micro units are not rounded or credited.
-                # Preserve raw integer/remainder evidence and fail closed as insufficient.
-                if self.accept_dust:
-                    expected_raw=expected*10**12
-                    d["expected_native_raw_minimum"]=str(expected_raw)
-                    d["raw_meets_invoice_threshold"]=int(d["raw_base_units"])>=expected_raw
-                    reason=("Native transfer contains sub-micro USDC dust; exact integer comparison does not credit or round the remainder. "
-                            f"Observed {d['raw_base_units']} raw units (remainder {d['dust_base_units']}); invoice threshold is {expected_raw}.")
-                    return self._res(invoice,tx_hash,"insufficient",reason,chain,ev|{"dust":d,"expected_usdc_micro":str(expected)},False,finalized)
-                return self._res(invoice,tx_hash,"unsupported","Native transfer precision mismatch: raw value not divisible by 1e12; refusing to round.",chain,ev|{"dust":d},False,finalized)
-            # choose first matching recipient+amount from authoritative event data
+            ev["native_events_auxiliary_count"]=len(auxiliary)
+            if not candidates or not ok_events:
+                return self._res(invoice,tx_hash,"insufficient","No valid Transfer log from the configured USDC ERC-20 contract; native logs and transaction.value are not USDC payment evidence.",chain,ev,False,finalized)
             for kind,sender,recipient,micro,e in ok_events:
                 if recipient.lower()!=invoice.recipient_address.lower(): continue
                 if sender.lower()!=invoice.payer_address.lower(): continue
                 if micro<expected or (self.exact_amount and micro!=expected): continue
                 ev["matched_event"]=e; ev["expected_usdc_micro"]=str(expected)
-                reason="Authoritative Transfer event satisfies invoice policy."+(" Finality confirmed by RPC." if finalized else " Finality not confirmed by RPC; transaction is included but finality is not asserted.")
+                reason="Configured USDC ERC-20 Transfer event satisfies invoice amount and addresses."
+                if finalized is None: reason+=" Finality is unknown: RPC provided no supported finality signal; it is not asserted."
+                elif finalized: reason+=" RPC reports finalized."
+                else: reason+=" RPC reports not finalized."
                 return self._res(invoice,tx_hash,"verified",reason,chain,ev,True,finalized)
             return self._res(invoice,tx_hash,"insufficient","Transfer event found but sender/recipient/amount do not satisfy the invoice policy.",chain,ev,False,finalized)
         except RpcError:

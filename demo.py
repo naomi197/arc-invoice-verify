@@ -15,7 +15,7 @@ def build_fixture():
         amount_expected_usdc="1.00",
     )
     body = {
-        "snapshot_version": "arc-invoice-verify/2",
+        "snapshot_version": "arc-invoice-verify/3",
         "invoice": invoice.model_dump(mode="json"),
         "tx_hash": "0x" + "a" * 64, "verified": False,
         "outcome": "unsupported", "reason": "DEMO ONLY: no network call.",

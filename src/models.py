@@ -27,7 +27,7 @@ class Invoice(BaseModel):
 class VerificationResult(BaseModel):
     model_config=ConfigDict(extra="forbid")
     invoice:Invoice; tx_hash:str; verified:bool; outcome:str; reason:str; policy:dict; evidence:dict; chain_id:int
-    snapshot_version:str="arc-invoice-verify/2"; hash_sha256:str=""; generated_at:str=""
+    snapshot_version:str="arc-invoice-verify/3"; hash_sha256:str=""; generated_at:str=""
     def compute_hash(self):
         from src.arc_verify_core.evidence import snapshot_hash
         return snapshot_hash({"snapshot_version":self.snapshot_version,"invoice":self.invoice.model_dump(mode="json"),"tx_hash":self.tx_hash,"verified":self.verified,"outcome":self.outcome,"reason":self.reason,"policy":self.policy,"evidence":self.evidence,"chain_id":self.chain_id})

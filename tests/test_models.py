@@ -11,3 +11,4 @@ class Models(unittest.TestCase):
         i=Invoice(invoice_id="A",description="d",recipient_address="0x"+"1"*40,payer_address="0x"+"2"*40,amount_expected_usdc="1")
         r1=VerificationResult(invoice=i,tx_hash="0x"+"a"*64,verified=False,outcome="unsupported",reason="x",policy={},evidence={},chain_id=5042)
         self.assertEqual(r1.compute_hash(),r1.compute_hash())
+        self.assertEqual(r1.snapshot_version,"arc-invoice-verify/3")

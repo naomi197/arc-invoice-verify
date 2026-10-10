@@ -23,7 +23,12 @@ class JsonRpcClient:
         self._id += 1
         request_obj = {'jsonrpc': '2.0', 'id': self._id, 'method': method, 'params': params}
         data = json.dumps(request_obj, separators=(',', ':')).encode()
-        req = urllib.request.Request(self.endpoint, data=data, headers={'Content-Type': 'application/json'}, method='POST')
+        req = urllib.request.Request(
+            self.endpoint,
+            data=data,
+            headers={'Content-Type': 'application/json', 'User-Agent': 'arc-invoice-verify'},
+            method='POST',
+        )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as response:
                 raw = response.read(self.max_response_bytes + 1)
